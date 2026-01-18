@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Working of Cursor in SQL Server</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<style>
+:root {
+    --primary:#2563eb;
+    --warning:#f59e0b;
+    --error:#dc2626;
+    --bg:#f8fafc;
+}
+
+body {
+    font-family: Segoe UI, Tahoma, sans-serif;
+    background: var(--bg);
+    padding: 20px;
+    color:#1e293b;
+}
+
+h2 { text-align:center; margin-bottom:5px; }
+.subtitle { text-align:center; color:#64748b; margin-bottom:20px; }
+
+.container {
+    max-width:1100px;
+    margin:auto;
+    display:grid;
+    grid-template-columns: 1fr 1fr;
+    gap:20px;
+}
+
+.panel {
+    background:white;
+    padding:20px;
+    border-radius:8px;
+    box-shadow:0 4px 6px rgba(0,0,0,0.1);
+}
+
+table {
+    width:100%;
+    border-collapse:collapse;
+}
+th,td {
+    padding:10px;
+    border-bottom:1px solid #e2e8f0;
+}
+th {
+    background:#334155;
+    color:white;
+}
+
+tbody tr {
+    cursor:pointer;
+}
+
+.selected-row {
+    background:#dbeafe !important;
+}
+
+.pointer {
+    color:var(--error);
+    font-weight:bold;
+    visibility:hidden;
+}
+
+.active-row {
+    background:#fef9c3 !important;
+    border:2px solid var(--primary);
+}
+.active-row .pointer {
+    visibility:visible;
+}
+
+.deleted-row {
+    opacity:0.4;
+    text-decoration:line-through;
+}
+
+.status-box {
+    background:#0f172a;
+    color:#eab308;
+    padding:15px;
+    border-radius:5px;
+    font-family:monospace;
+    margin-bottom:15px;
+}
+
+.console {
+    background:#f1f5f9;
+    border-left:4px solid var(--primary);
+    padding:10px;
+    height:180px;
+    overflow-y:auto;
+    font-family:monospace;
+    font-size:14px;
+}
+
+button {
+    background:var(--primary);
+    color:white;
+    border:none;
+    padding:10px 16px;
+    margin:5px 5px 5px 0;
+    border-radius:5px;
+    cursor:pointer;
+    font-weight:bold;
+}
+button.warning {
+    background:var(--warning);
+}
+button:disabled {
+    background:#cbd5e1;
+    cursor:not-allowed;
+}
+
+.info {
+    margin-top:15px;
+    font-size:14px;
+    background:#ecfeff;
+    padding:12px;
+    border-left:4px solid #06b6d4;
+}
+</style>
+</head>
+
+<body>
+
+<h2>Working of Cursor in SQL Server</h2>
+<div class="subtitle">
+This simulation demonstrates row-by-row cursor processing, all values of
+@@FETCH_STATUS (0, -1, -2), and shows that a cursor does not return any value.
+</div>
+
+<div class="container">
+
+<!-- LEFT PANEL -->
+<div class="panel">
+<h3>STUDENT Table (Result Set)</h3>
+
+<table>
+<thead>
+<tr>
+<th>Ptr</th>
+<th>ID</th>
+<th>Name</th>
+<th>Dept</th>
+</tr>
+</thead>
+<tbody id="tableBody">
+<tr id="row-0" onclick="selectRow(0)">
+<td><span class="pointer">➤</span></td><td>101</td><td>Raj Patel</td><td>CSE</td>
+</tr>
+<tr id="row-1" onclick="selectRow(1)">
+<td><span class="pointer">➤</span></td><td>102</td><td>Priya Shah</td><td>IT</td>
+</tr>
+<tr id="row-2" onclick="selectRow(2)">
+<td><span class="pointer">➤</span></td><td>103</td><td>Amit Kumar</td><td>CSE</td>
+</tr>
+<tr id="row-3" onclick="selectRow(3)">
+<td><span class="pointer">➤</span></td><td>104</td><td>Sneha Desai</td><td>ECE</td>
+</tr>
+<tr id="row-4" onclick="selectRow(4)">
+<td><span class="pointer">➤</span></td><td>105</td><td>Rohan Mehta</td><td>IT</td>
+</tr>
+</tbody>
+</table>
+
+<p id="pointer-msg" style="margin-top:10px;font-style:italic;color:#64748b;">
+Click a row to select it, then delete.
+</p>
+</div>
+
+<!-- RIGHT PANEL -->
+<div class="panel">
+
+<div class="status-box">
+<div>Cursor State: <span id="cursor-state">IDLE</span></div>
+<div>@@FETCH_STATUS: <span id="fetch-status">N/A</span></div>
+<div>Current Action: <span id="curr-action">None</span></div>
+</div>
+
+<div>
+<button onclick="declareCursor()" id="btn-declare">1. DECLARE & OPEN</button>
+<button onclick="fetchNext()" id="btn-fetch" disabled>2. FETCH NEXT</button>
+<button class="warning" onclick="deleteSelectedRow()">DELETE SELECTED ROW</button>
+<button onclick="closeCursor()" id="btn-close" disabled>3. CLOSE</button>
+<button onclick="deallocateCursor()" id="btn-dealloc" disabled>4. DEALLOCATE</button>
+</div>
+
+<h4 style="margin-top:15px;">PRINT Output (Inside Loop)</h4>
+<div class="console" id="console">-- No output yet --</div>
+
+<div class="info">
+<ul>
+<li><b>0</b> → Row fetched successfully</li>
+<li><b>-1</b> → No more rows</li>
+<li><b>-2</b> → Row existed but was deleted before fetch</li>
+</ul>
+<p>Cursor never returns data; it only controls execution.</p>
+</div>
+
+</div>
+</div>
+
+<script>
+let currentRow = -1;
+let selectedRow = null;
+let deletedRows = new Set();
+
+const students = [
+    {name:"Raj Patel", dept:"CSE"},
+    {name:"Priya Shah", dept:"IT"},
+    {name:"Amit Kumar", dept:"CSE"},
+    {name:"Sneha Desai", dept:"ECE"},
+    {name:"Rohan Mehta", dept:"IT"}
+];
+
+function clearRows(){
+    document.querySelectorAll("tbody tr").forEach(r=>{
+        r.classList.remove("active-row","selected-row");
+    });
+}
+
+function log(msg){
+    const c = document.getElementById("console");
+    if(c.innerHTML.includes("No output")) c.innerHTML="";
+    c.innerHTML += "> " + msg + "<br>";
+    c.scrollTop = c.scrollHeight;
+}
+
+function update(action,status,state){
+    document.getElementById("curr-action").innerText = action;
+    document.getElementById("fetch-status").innerText = status;
+    document.getElementById("cursor-state").innerText = state;
+}
+
+function selectRow(index){
+    clearRows();
+    selectedRow = index;
+    document.getElementById("row-"+index).classList.add("selected-row");
+    log("Row " + (index+1) + " selected.");
+}
+
+function declareCursor(){
+    currentRow = -1;
+    deletedRows.clear();
+    clearRows();
+    document.querySelectorAll("tbody tr").forEach(r=>r.classList.remove("deleted-row"));
+    document.getElementById("console").innerHTML = "Cursor declared and opened.<br>";
+    document.getElementById("pointer-msg").innerText =
+        "Cursor OPENED (Pointer BEFORE first row)";
+    update("OPEN","N/A","OPENED");
+    document.getElementById("btn-fetch").disabled = false;
+}
+
+function deleteSelectedRow(){
+    if(selectedRow === null){
+        log("No row selected to delete.");
+        return;
+    }
+    deletedRows.add(selectedRow);
+    document.getElementById("row-"+selectedRow).classList.add("deleted-row");
+    log("Row " + (selectedRow+1) + " deleted BEFORE fetch.");
+    selectedRow = null;
+}
+
+function fetchNext(){
+    currentRow++;
+    clearRows();
+
+    if(deletedRows.has(currentRow)){
+        update("FETCH NEXT","-2","ROW MISSING");
+        document.getElementById("pointer-msg").innerText =
+            "Row was deleted before fetch";
+        log("Fetch failed. @@FETCH_STATUS = -2.");
+        document.getElementById("btn-fetch").disabled = true;
+        document.getElementById("btn-dealloc").disabled = false;
+        return;
+    }
+
+    if(currentRow < students.length){
+        document.getElementById("row-"+currentRow).classList.add("active-row");
+        document.getElementById("pointer-msg").innerText =
+            "Cursor pointing to Row " + (currentRow+1);
+        update("FETCH NEXT","0","FETCHING");
+        log(students[currentRow].name + " belongs to " + students[currentRow].dept + " department.");
+        document.getElementById("btn-close").disabled = false;
+    } else {
+        update("FETCH NEXT","-1","END OF DATA");
+        document.getElementById("pointer-msg").innerText =
+            "Cursor moved past last row";
+        log("No more rows. @@FETCH_STATUS = -1.");
+        document.getElementById("btn-fetch").disabled = true;
+        document.getElementById("btn-dealloc").disabled = false;
+    }
+}
+
+function closeCursor(){
+    clearRows();
+    update("CLOSE","N/A","CLOSED");
+    document.getElementById("pointer-msg").innerText =
+        "Cursor CLOSED (Result set released)";
+    log("Cursor closed.");
+}
+
+function deallocateCursor(){
+    update("DEALLOCATE","N/A","DEALLOCATED");
+    document.getElementById("pointer-msg").innerText =
+        "Cursor DEALLOCATED (Memory freed)";
+    log("Cursor deallocated.");
+}
+</script>
+
+</body>
+</html>
