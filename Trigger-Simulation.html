@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SQL DML Trigger Simulation</title>
+    <style>
+        :root {
+            --primary: #0f172a; --accent: #3b82f6; --success: #22c55e;
+            --danger: #ef4444; --warning: #f59e0b; --bg: #f1f5f9;
+        }
+        * { box-sizing: border-box; font-family: 'Segoe UI', system-ui, sans-serif; }
+        
+        body { 
+            background: var(--bg); margin: 0; padding: 10px; 
+            height: 100vh; width: 100vw; overflow: hidden; 
+            display: flex; flex-direction: column;
+        }
+
+        .header { 
+            display: flex; justify-content: space-between; align-items: center;
+            background: var(--primary); color: white; padding: 10px 15px; border-radius: 8px; margin-bottom: 8px;
+            flex-shrink: 0;
+        }
+
+        .dashboard {
+            display: grid; grid-template-columns: 1.2fr 1fr; grid-template-rows: 1fr 1fr;
+            gap: 10px; flex-grow: 1; min-height: 0; 
+        }
+
+        .panel { 
+            background: white; border-radius: 8px; padding: 10px; 
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05); display: flex; flex-direction: column; min-height: 0; 
+        }
+
+        h3 { margin: 0 0 8px 0; font-size: 0.85rem; text-transform: uppercase; color: #64748b; border-bottom: 1px solid #eee; }
+
+        .table-wrapper { flex: 1; overflow-y: auto; }
+        table { width: 100%; border-collapse: collapse; font-size: 0.8rem; table-layout: fixed; }
+        th, td { padding: 6px; text-align: left; border-bottom: 1px solid #f1f5f9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        th { background: #f8fafc; color: #475569; position: sticky; top: 0; }
+
+        /* Animations */
+        @keyframes rowIn {
+            0% { transform: translateY(-10px); opacity: 0; background-color: var(--warning); }
+            100% { transform: translateY(0); opacity: 1; }
+        }
+        @keyframes logFlash {
+            0% { background-color: #dbeafe; }
+            100% { background-color: transparent; }
+        }
+        .animate-row { animation: rowIn 0.5s ease-out forwards; }
+        .animate-log { animation: logFlash 0.8s ease-out forwards; }
+
+        .ins-row { background: #f0fdf4 !important; color: #166534; font-weight: bold; border-left: 4px solid var(--success); }
+        .del-row { background: #fef2f2 !important; color: #991b1b; font-weight: bold; border-left: 4px solid var(--danger); }
+
+        #console { 
+            background: #1e293b; color: #38bdf8; font-family: 'Consolas', monospace; 
+            padding: 10px; border-radius: 4px; font-size: 0.75rem; 
+            flex: 1; overflow-y: auto; 
+        }
+        .log-entry { margin-bottom: 4px; border-bottom: 1px solid #334155; padding-bottom: 2px; }
+        .log-trigger { color: #f472b6; font-weight: bold; }
+        .log-error { color: #fca5a5; font-weight: bold; background: #450a0a; padding: 8px; border-radius: 3px; margin: 5px 0; line-height: 1.4; }
+        .log-success { color: #4ade80; }
+
+        .controls { display: flex; gap: 8px; }
+        button { padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; color: white; font-size: 0.8rem; }
+        .btn-ins { background: var(--success); }
+        .btn-upd { background: var(--warning); }
+        .btn-del { background: var(--danger); }
+        
+        #toast {
+            position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+            background: var(--primary); color: white; padding: 10px 25px; border-radius: 30px;
+            display: none; z-index: 1000; font-weight: bold; box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+        }
+    </style>
+</head>
+<body>
+
+<div id="toast">Message</div>
+
+<div class="header">
+    <div style="font-weight: bold;">SQL DML Trigger Simulation</div>
+    <div class="controls">
+        <select id="mode" style="padding:4px; border-radius:4px;">
+            <option value="AFTER">AFTER Trigger</option>
+            <option value="INSTEAD">INSTEAD OF Trigger</option>
+        </select>
+        <button class="btn-ins" onclick="handleInsert()">INSERT</button>
+        <button class="btn-upd" onclick="handleUpdate()">UPDATE</button>
+        <button class="btn-del" onclick="handleDelete()">DELETE</button>
+        <button style="background:#64748b" onclick="location.reload()">RESET</button>
+    </div>
+</div>
+
+<div class="dashboard">
+    <div class="panel">
+        <h3>1. STUDENT TABLE (Physical Table)</h3>
+        <div class="table-wrapper">
+            <table>
+                <thead><tr><th width="15%">ID</th><th width="35%">Name</th><th width="30%">Dept</th><th width="20%">Year</th></tr></thead>
+                <tbody id="mainBody"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="panel">
+        <h3>2. SQL Server Output Console</h3>
+        <div id="console"></div>
+    </div>
+
+    <div class="panel" style="padding:0; background:none; box-shadow:none; display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+        <div class="panel" style="border-top: 3px solid var(--success);">
+            <h3>INSERTED (Virtual Table)</h3>
+            <div class="table-wrapper"><table><thead><tr><th width="15%">ID</th><th width="35%">Name</th><th width="30%">Dept</th><th width="20%">Year</th></tr></thead><tbody id="insBody"></tbody></table></div>
+        </div>
+        <div class="panel" style="border-top: 3px solid var(--danger);">
+            <h3>DELETED (Virtual Table)</h3>
+            <div class="table-wrapper"><table><thead><tr><th width="15%">ID</th><th width="35%">Name</th><th width="30%">Dept</th><th width="20%">Year</th></tr></thead><tbody id="delBody"></tbody></table></div>
+        </div>
+    </div>
+
+    <div class="panel" style="border-top: 3px solid var(--accent);">
+        <h3>3. LOG TABLE</h3>
+        <div class="table-wrapper">
+            <table>
+                <thead><tr><th width="20%">Stud_ID</th><th width="45%">Stud_Name</th><th width="35%">Operation</th></tr></thead>
+                <tbody id="logBody"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+    let students = [
+        {id: 101, name: "Darshan Halani", dept: "CSE", year: 2023},
+        {id: 102, name: "Nirav Patel", dept: "IT", year: 2022},
+        {id: 103, name: "Rohan Mehta", dept: "MECH", year: 2023},
+        {id: 104, name: "Sneha Desai", dept: "CSE", year: 2024}
+    ];
+    let auditLog = [];
+    let lastId = 104;
+
+    function renderAll() {
+        document.getElementById('mainBody').innerHTML = students.map(s => `<tr><td>${s.id}</td><td>${s.name}</td><td>${s.dept}</td><td>${s.year}</td></tr>`).join('');
+        document.getElementById('logBody').innerHTML = auditLog.map(l => `<tr class="animate-log"><td>${l.id}</td><td>${l.name}</td><td>${l.action}</td></tr>`).join('');
+    }
+
+    function consoleLog(msg, type = '') {
+        const c = document.getElementById('console');
+        const d = document.createElement('div');
+        d.className = 'log-entry';
+        if(type === 'trigger') d.classList.add('log-trigger');
+        if(type === 'error') d.classList.add('log-error');
+        if(type === 'success') d.classList.add('log-success');
+        d.innerHTML = `> ${msg}`;
+        c.appendChild(d);
+        c.scrollTop = c.scrollHeight;
+    }
+
+    function setMagic(insHtml = "", delHtml = "") {
+        document.getElementById('insBody').innerHTML = insHtml;
+        document.getElementById('delBody').innerHTML = delHtml;
+    }
+
+    function toast(msg) {
+        const t = document.getElementById('toast');
+        t.innerText = msg; t.style.display = 'block';
+        setTimeout(() => t.style.display = 'none', 1500);
+    }
+
+    function handleInsert() {
+        const mode = document.getElementById('mode').value;
+        lastId++;
+        const nextId = lastId;
+        const newName = "Student_" + nextId;
+        
+        if(mode === "AFTER") {
+            // AFTER TRIGGER SCENARIO: Valid Insert
+            consoleLog(`Msg 102, Level 15: Executing INSERT INTO [STUDENT]...`);
+            setMagic(`<tr class="ins-row animate-row"><td>${nextId}</td><td>${newName}</td><td>CSE</td><td>2026</td></tr>`, "");
+            
+            setTimeout(() => {
+                consoleLog(`TRIGGER: AFTER INSERT FIRED.`, 'trigger');
+                students.push({id: nextId, name: newName, dept: "CSE", year: 2026});
+                auditLog.unshift({id: nextId, name: newName, action: 'INSERT'});
+                consoleLog(`(1 row affected)`, 'success');
+                renderAll();
+                toast("Row Created!");
+            }, 600);
+        } else {
+            // INSTEAD OF TRIGGER SCENARIO: Catch NULL attempt
+            consoleLog(`Msg 102, Level 15: Executing INSERT INTO [STUDENT] (Dept = NULL)...`);
+            setMagic(`<tr class="ins-row animate-row"><td>${nextId}</td><td>${newName}</td><td style="color:var(--danger); font-weight:bold">NULL</td><td>2026</td></tr>`, "");
+
+            setTimeout(() => {
+                consoleLog(`TRIGGER: INSTEAD OF INSERT FIRED.`, 'trigger');
+                consoleLog(`Msg 50001, Level 16, State 1: Violation of Security Policy. [Dept] column cannot contain NULL values. The operation has been cancelled.`, 'error');
+                lastId--; 
+                toast("❌ Insert Blocked");
+            }, 600);
+        }
+    }
+
+    function handleUpdate() {
+        if(students.length === 0) return;
+        const mode = document.getElementById('mode').value;
+        const old = {...students[0]};
+        const updated = {...students[0], year: students[0].year + 1};
+
+        consoleLog(`Msg 102, Level 15: Executing UPDATE [STUDENT] WHERE ID = ${old.id}...`);
+        setMagic(
+            `<tr class="ins-row animate-row"><td>${updated.id}</td><td>${updated.name}</td><td>${updated.dept}</td><td>${updated.year}</td></tr>`,
+            `<tr class="del-row animate-row"><td>${old.id}</td><td>${old.name}</td><td>${old.dept}</td><td>${old.year}</td></tr>`
+        );
+
+        setTimeout(() => {
+            consoleLog(`TRIGGER: ${mode} UPDATE FIRED.`, 'trigger');
+            students[0].year = updated.year;
+            auditLog.unshift({id: old.id, name: old.name, action: 'UPDATE'});
+            consoleLog(`(1 row affected)`, 'success');
+            renderAll();
+            toast("Row Updated!");
+        }, 600);
+    }
+
+    function handleDelete() {
+        if(students.length === 0) return;
+        const mode = document.getElementById('mode').value;
+        const removed = students.pop();
+        
+        consoleLog(`Msg 102, Level 15: Executing DELETE FROM [STUDENT] WHERE ID = ${removed.id}...`);
+        setMagic("", `<tr class="del-row animate-row"><td>${removed.id}</td><td>${removed.name}</td><td>${removed.dept}</td><td>${removed.year}</td></tr>`);
+
+        setTimeout(() => {
+            consoleLog(`TRIGGER: ${mode} DELETE FIRED.`, 'trigger');
+            auditLog.unshift({id: removed.id, name: removed.name, action: 'DELETE'});
+            consoleLog(`(1 row affected)`, 'success');
+            renderAll();
+            toast("Row Deleted!");
+        }, 600);
+    }
+
+    renderAll();
+    consoleLog("SQL Server Simulation Ready.");
+</script>
+</body>
+</html>
